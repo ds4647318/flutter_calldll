@@ -1,0 +1,59 @@
+name: Publish
+on:
+  # Enable manual run
+  workflow_dispatch:
+  push:
+    tags:
+      - "*.*.*"
+env:
+  pkg_name: flutter_calldll
+jobs:
+  create-build:
+    name: Create ${{ matrix.target }} build
+    runs-on: ${{ matrix.os }}
+    # softprops/action-gh-release needs this permission
+    permissions:
+      contents: write
+
+    strategy:
+      # Disable fail-fast as we want results from all even if one fails.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            build_path: build\windows\x64\runner\Release
+
+    steps:
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+      - name: Enable desktop support
+        run: |
+          flutter config --enable-windows-desktop
+      - run: flutter doctor -v
+      - uses: actions/checkout@v3
+      # - run: flutter create .
+      - run: flutter pub get
+
+      - run: flutter build ${{ matrix.target }} --release
+
+      - name: Copy VC redistributables to release directory for Windows
+        if: matrix.target == 'windows'
+        working-directory: ${{ matrix.build_path }}
+        run: |
+          Copy-Item (vswhere -latest -find 'VC\Redist\MSVC\*\x64\*\msvcp140.dll') .
+          Copy-Item (vswhere -latest -find 'VC\Redist\MSVC\*\x64\*\vcruntime140.dll') .
+          Copy-Item (vswhere -latest -find 'VC\Redist\MSVC\*\x64\*\vcruntime140_1.dll') .
+
+      - name: Compress build for Windows
+        if: matrix.target == 'windows'
+        working-directory: ${{ matrix.build_path }}
+        run: compress-archive -Path * -DestinationPath "${env:GITHUB_WORKSPACE}\${{ env.pkg_name }}-${{ github.ref_name }}-${{ matrix.target }}-x64.zip"
+
+      - name: Add packaged build to release draft
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          draft: false
+          files: ${{ env.pkg_name }}*
